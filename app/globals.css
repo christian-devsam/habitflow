@@ -1,0 +1,124 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --bg: 224 20% 5%;
+  --bg-card: 224 18% 8%;
+  --bg-elevated: 224 16% 12%;
+  --border: 224 14% 18%;
+  --text: 215 28% 90%;
+  --text-muted: 215 14% 52%;
+  --level-minimum: 215 14% 52%;
+  --level-ideal: 217 91% 60%;
+  --level-elite: 38 92% 50%;
+}
+
+* {
+  box-sizing: border-box;
+  padding: 0;
+  margin: 0;
+}
+
+html,
+body {
+  max-width: 100vw;
+  overflow-x: hidden;
+  background-color: hsl(var(--bg));
+  color: hsl(var(--text));
+  font-family: system-ui, -apple-system, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* Scrollbar styling */
+::-webkit-scrollbar {
+  width: 4px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: hsl(var(--border));
+  border-radius: 2px;
+}
+
+/* Selection */
+::selection {
+  background: hsl(var(--level-ideal) / 0.3);
+}
+
+@layer utilities {
+  .glass {
+    background: hsl(var(--bg-card) / 0.8);
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+  }
+
+  .card-border {
+    border: 1px solid hsl(var(--border));
+  }
+
+  .text-gradient-gold {
+    background: linear-gradient(135deg, #f59e0b, #fbbf24);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+  }
+
+  .glow-blue {
+    box-shadow: 0 0 20px hsl(var(--level-ideal) / 0.25);
+  }
+
+  .glow-gold {
+    box-shadow: 0 0 20px hsl(var(--level-elite) / 0.35);
+  }
+
+  .glow-red {
+    animation: glowRed 1.5s ease-in-out infinite alternate;
+  }
+
+  .drag-hint-right {
+    background: linear-gradient(to right, transparent, rgba(34, 197, 94, 0.15));
+  }
+
+  .drag-hint-left {
+    background: linear-gradient(to left, transparent, rgba(239, 68, 68, 0.15));
+  }
+}
+
+@keyframes glowRed {
+  from { box-shadow: 0 0 10px rgba(239, 68, 68, 0.4), inset 0 0 10px rgba(239, 68, 68, 0.05); }
+  to { box-shadow: 0 0 30px rgba(239, 68, 68, 0.8), inset 0 0 20px rgba(239, 68, 68, 0.1); }
+}
+
+@keyframes pulseRing {
+  0% { transform: scale(1); opacity: 1; }
+  100% { transform: scale(1.5); opacity: 0; }
+}
+
+.pulse-ring::after {
+  content: '';
+  position: absolute;
+  inset: -4px;
+  border-radius: inherit;
+  border: 2px solid #ef4444;
+  animation: pulseRing 1.5s ease-out infinite;
+}
+
+/* Touch drag area indicator */
+.swipe-indicator {
+  position: relative;
+}
+
+.swipe-indicator::before {
+  content: '';
+  position: absolute;
+  bottom: 8px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 32px;
+  height: 3px;
+  background: hsl(var(--border));
+  border-radius: 2px;
+}
