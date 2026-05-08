@@ -1,12 +1,13 @@
 {
   "name": "habitflow",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "scripts": {
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "next lint"
+    "lint": "next lint",
+    "generate-vapid": "node -e \"const wp=require('web-push');const k=wp.generateVAPIDKeys();console.log('VAPID_PUBLIC_KEY='+k.publicKey);console.log('VAPID_PRIVATE_KEY='+k.privateKey)\""
   },
   "dependencies": {
     "next": "^14.2.0",
@@ -17,12 +18,16 @@
     "lucide-react": "^0.475.0",
     "date-fns": "^3.6.0",
     "clsx": "^2.1.1",
-    "tailwind-merge": "^2.3.0"
+    "tailwind-merge": "^2.3.0",
+    "@supabase/supabase-js": "^2.45.0",
+    "groq-sdk": "^0.7.0",
+    "web-push": "^3.6.7"
   },
   "devDependencies": {
     "@types/node": "^20",
     "@types/react": "^18",
     "@types/react-dom": "^18",
+    "@types/web-push": "^3.6.3",
     "typescript": "^5",
     "tailwindcss": "^3.4.0",
     "autoprefixer": "^10",
