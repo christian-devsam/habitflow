@@ -1,7 +1,7 @@
 'use client';
-import { useRef, useState } from 'react';
-import { motion, useMotionValue, useTransform, useAnimation } from 'framer-motion';
-import { Flame, CheckCircle2, X, ChevronUp, ChevronDown } from 'lucide-react';
+import { useState } from 'react';
+import { motion, AnimatePresence } from 'framer-motion';
+import { Flame, Check, X, ChevronUp, ChevronDown, Zap } from 'lucide-react';
 import { Habit, DifficultyLevel } from '@/lib/types';
 import { LEVEL_LABELS, LEVEL_COLORS } from '@/lib/resilience';
 import { formatDuration, cn } from '@/lib/utils';
@@ -17,19 +17,12 @@ const LEVEL_ORDER: DifficultyLevel[] = ['minimum', 'ideal', 'elite'];
 
 export function HabitCard({ habit, isHero = false, suggestedLevel }: HabitCardProps) {
   const { completeHabit, skipHabit, setHabitLevel } = useHabitStore();
-  const [showSkipInput, setShowSkipInput] = useState(false);
-  const [justification, setJustification] = useState('');
-  const [completed, setCompleted] = useState(false);
+
+  const [done, setDone] = useState(false);
   const [skipped, setSkipped] = useState(false);
-
-  const x = useMotionValue(0);
-  const controls = useAnimation();
-
-  const bgColor = useTransform(x, [-120, 0, 120], [
-    'rgba(239,68,68,0.12)', 'rgba(0,0,0,0)', 'rgba(34,197,94,0.12)'
-  ]);
-  const completeOpacity = useTransform(x, [0, 80, 120], [0, 0.7, 1]);
-  const skipOpacity = useTransform(x, [-120, -80, 0], [1, 0.7, 0]);
+  const [showSkip, setShowSkip] = useState(false);
+  const [justification, setJustification] = useState('');
+  const [loading, setLoading] = useState(false);
 
   const currentLevel = habit.current_difficulty_level;
   const levelColor = LEVEL_COLORS[currentLevel];
@@ -40,152 +33,142 @@ export function HabitCard({ habit, isHero = false, suggestedLevel }: HabitCardPr
   function cycleLevel(dir: 1 | -1) {
     const idx = LEVEL_ORDER.indexOf(currentLevel);
     const next = LEVEL_ORDER[Math.max(0, Math.min(2, idx + dir))];
-    setHabitLevel(habit.id, next);
+    if (next !== currentLevel) setHabitLevel(habit.id, next);
   }
 
-  async function handleDragEnd(_: unknown, info: { offset: { x: number } }) {
-    const { x: ox } = info.offset;
-    if (ox > 100) {
-      await controls.start({ x: 350, opacity: 0, transition: { duration: 0.3 } });
-      completeHabit(habit.id, currentLevel);
-      setCompleted(true);
-    } else if (ox < -100) {
-      await controls.start({ x: 0, transition: { type: 'spring', stiffness: 400, damping: 30 } });
-      setShowSkipInput(true);
-    } else {
-      controls.start({ x: 0, transition: { type: 'spring', stiffness: 400, damping: 30 } });
-    }
+  async function handleComplete() {
+    if (loading || done) return;
+    setLoading(true);
+    completeHabit(habit.id, currentLevel);
+    setDone(true);
+    setLoading(false);
   }
 
   function handleSkipConfirm() {
     skipHabit(habit.id, justification);
     setSkipped(true);
-    setShowSkipInput(false);
+    setShowSkip(false);
   }
 
-  if (completed || skipped) return null;
+  // Completed animation then hide
+  if (done) {
+    return (
+      <motion.div
+        initial={{ opacity: 1, scale: 1 }}
+        animate={{ opacity: 0, scale: 0.95, height: 0, marginBottom: 0 }}
+        transition={{ delay: 0.6, duration: 0.3 }}
+        className="overflow-hidden"
+      >
+        <div className="rounded-2xl p-5 flex items-center justify-center gap-3"
+          style={{ background: `${habit.color}20`, border: `1px solid ${habit.color}40` }}>
+          <span className="text-2xl">{habit.icon}</span>
+          <span className="font-semibold text-sm" style={{ color: habit.color }}>
+            ✓ {habit.name} completado · +{currentLevel === 'minimum' ? 5 : currentLevel === 'ideal' ? 15 : 30} pts
+          </span>
+        </div>
+      </motion.div>
+    );
+  }
+
+  if (skipped) return null;
 
   return (
-    <div className="relative overflow-hidden">
-      {/* Background indicators */}
-      <div className="absolute inset-0 flex items-center justify-between px-6 pointer-events-none">
-        <motion.div style={{ opacity: skipOpacity }}
-          className="flex items-center gap-2 text-red-400 font-semibold">
-          <X className="w-5 h-5" />
-          <span className="text-sm">Omitir</span>
-        </motion.div>
-        <motion.div style={{ opacity: completeOpacity }}
-          className="flex items-center gap-2 text-green-400 font-semibold">
-          <span className="text-sm">Completado</span>
-          <CheckCircle2 className="w-5 h-5" />
-        </motion.div>
-      </div>
-
+    <AnimatePresence>
       <motion.div
-        style={{ x, backgroundColor: bgColor }}
-        drag="x"
-        dragConstraints={{ left: -150, right: 150 }}
-        dragElastic={0.15}
-        dragDirectionLock
-        animate={controls}
-        onDragEnd={handleDragEnd}
-        whileDrag={{ cursor: 'grabbing' }}
+        initial={{ opacity: 0, y: 12 }}
+        animate={{ opacity: 1, y: 0 }}
+        exit={{ opacity: 0, scale: 0.95 }}
         className={cn(
-          'relative rounded-2xl card-border cursor-grab select-none',
-          isHero ? 'p-5' : 'p-4',
-          'bg-[hsl(var(--bg-card))]'
+          'rounded-2xl bg-[hsl(var(--bg-card))] border border-[hsl(var(--border))] overflow-hidden',
+          isHero && 'shadow-lg'
         )}
       >
-        {/* Habit color accent bar */}
-        <div
-          className="absolute left-0 top-4 bottom-4 w-1 rounded-r-full"
-          style={{ background: habit.color }}
-        />
+        {/* Color accent top bar */}
+        <div className="h-1 w-full" style={{ background: `linear-gradient(90deg, ${habit.color}, ${habit.color}80)` }} />
 
-        <div className="pl-4">
-          {/* Header row */}
-          <div className="flex items-start justify-between gap-3">
-            <div className="flex items-center gap-3">
-              <span className={cn('rounded-xl', isHero ? 'text-3xl' : 'text-2xl')}>
-                {habit.icon}
-              </span>
-              <div>
-                <h3 className={cn('font-semibold text-[hsl(var(--text))]', isHero ? 'text-xl' : 'text-base')}>
-                  {habit.name}
-                </h3>
-                <div className="flex items-center gap-2 mt-0.5">
-                  <Flame className="w-3.5 h-3.5 text-orange-400" />
-                  <span className="text-xs text-[hsl(var(--text-muted))]">
-                    {habit.current_streak} días
-                  </span>
-                  {habit.environment_setup_status === 'ready' && (
-                    <span className="text-xs text-green-400">● Listo</span>
-                  )}
-                </div>
+        <div className="p-4">
+          {/* Header */}
+          <div className="flex items-start gap-3">
+            <span className={cn('rounded-xl leading-none', isHero ? 'text-4xl' : 'text-3xl')}>
+              {habit.icon}
+            </span>
+
+            <div className="flex-1 min-w-0">
+              <h3 className={cn('font-bold text-[hsl(var(--text))] leading-tight', isHero ? 'text-xl' : 'text-lg')}>
+                {habit.name}
+              </h3>
+              <div className="flex items-center gap-2 mt-1 flex-wrap">
+                {habit.current_streak > 0 && (
+                  <div className="flex items-center gap-1">
+                    <Flame className="w-3.5 h-3.5 text-orange-400" />
+                    <span className="text-xs text-orange-400 font-semibold">{habit.current_streak} días</span>
+                  </div>
+                )}
+                {habit.environment_setup_status === 'ready' && (
+                  <span className="text-xs text-green-400">● Listo</span>
+                )}
               </div>
             </div>
 
             {/* Level selector */}
-            <div className="flex flex-col items-center gap-0.5">
+            <div className="flex flex-col items-center gap-1 shrink-0">
               <button
-                onClick={(e) => { e.stopPropagation(); cycleLevel(1); }}
-                className="p-0.5 rounded hover:bg-[hsl(var(--bg-elevated))] transition-colors"
+                onPointerDown={e => { e.preventDefault(); cycleLevel(1); }}
+                className="p-1 rounded-lg active:bg-[hsl(var(--bg-elevated))] transition-colors"
+                aria-label="Subir nivel"
               >
                 <ChevronUp className="w-4 h-4 text-[hsl(var(--text-muted))]" />
               </button>
 
               <div
-                className="px-2.5 py-1 rounded-lg text-xs font-bold tracking-wide"
-                style={{ color: levelColor, border: `1px solid ${levelColor}40`, background: `${levelColor}15` }}
+                className="px-2.5 py-1 rounded-xl text-xs font-bold tracking-wide text-center min-w-[54px]"
+                style={{ color: levelColor, background: `${levelColor}18`, border: `1px solid ${levelColor}35` }}
               >
                 {LEVEL_LABELS[currentLevel]}
               </div>
 
               <button
-                onClick={(e) => { e.stopPropagation(); cycleLevel(-1); }}
-                className="p-0.5 rounded hover:bg-[hsl(var(--bg-elevated))] transition-colors"
+                onPointerDown={e => { e.preventDefault(); cycleLevel(-1); }}
+                className="p-1 rounded-lg active:bg-[hsl(var(--bg-elevated))] transition-colors"
+                aria-label="Bajar nivel"
               >
                 <ChevronDown className="w-4 h-4 text-[hsl(var(--text-muted))]" />
               </button>
             </div>
           </div>
 
-          {/* Level description */}
-          <div className="mt-3 flex items-center justify-between">
+          {/* Level description + duration */}
+          <div className="mt-3 flex items-center justify-between gap-2">
             <p className="text-sm text-[hsl(var(--text-muted))] leading-snug flex-1">
               {levelDesc}
             </p>
-            <span className="ml-3 text-sm font-mono font-semibold text-[hsl(var(--text-muted))]">
+            <span className="text-sm font-mono font-semibold text-[hsl(var(--text-muted))] shrink-0">
               {formatDuration(levelDuration)}
             </span>
           </div>
 
-          {/* Suggestion badge */}
-          {isSuggested && (
-            <div className="mt-2.5 inline-flex items-center gap-1.5 px-2 py-1 rounded-lg bg-blue-500/10 border border-blue-500/20">
-              <span className="text-blue-400 text-xs">✦</span>
-              <span className="text-blue-400 text-xs">
-                IA sugiere: {LEVEL_LABELS[suggestedLevel]}
-              </span>
+          {/* Points preview */}
+          <div className="flex items-center gap-1.5 mt-2">
+            <Zap className="w-3 h-3 text-amber-400" />
+            <span className="text-xs text-amber-400">
+              +{currentLevel === 'minimum' ? 5 : currentLevel === 'ideal' ? 15 : 30} pts al completar
+            </span>
+            {isSuggested && (
               <button
-                className="text-blue-300 text-xs underline"
-                onClick={(e) => { e.stopPropagation(); setHabitLevel(habit.id, suggestedLevel); }}
+                onPointerDown={e => { e.preventDefault(); setHabitLevel(habit.id, suggestedLevel); }}
+                className="ml-auto text-xs text-blue-400 underline"
               >
-                aplicar
+                IA sugiere {LEVEL_LABELS[suggestedLevel]}
               </button>
-            </div>
-          )}
+            )}
+          </div>
 
-          {/* Resilience bar */}
+          {/* Resilience bar (hero only) */}
           {isHero && (
             <div className="mt-3">
-              <div className="flex items-center justify-between mb-1">
-                <span className="text-[10px] text-[hsl(var(--text-muted))] uppercase tracking-wider">
-                  Resiliencia
-                </span>
-                <span className="text-[10px] text-[hsl(var(--text-muted))]">
-                  {habit.streak_resilience_points}%
-                </span>
+              <div className="flex justify-between mb-1">
+                <span className="text-[10px] text-[hsl(var(--text-muted))] uppercase tracking-wider">Resiliencia</span>
+                <span className="text-[10px] text-[hsl(var(--text-muted))]">{habit.streak_resilience_points}%</span>
               </div>
               <div className="h-1 rounded-full bg-[hsl(var(--bg-elevated))]">
                 <motion.div
@@ -193,56 +176,78 @@ export function HabitCard({ habit, isHero = false, suggestedLevel }: HabitCardPr
                   style={{ background: levelColor }}
                   initial={{ width: 0 }}
                   animate={{ width: `${habit.streak_resilience_points}%` }}
-                  transition={{ duration: 1, delay: 0.2 }}
+                  transition={{ duration: 0.8, delay: 0.1 }}
                 />
               </div>
             </div>
           )}
-
-          {/* Swipe hint */}
-          {isHero && (
-            <div className="mt-4 flex items-center justify-between text-[10px] text-[hsl(var(--text-muted))] opacity-50">
-              <span>← Omitir</span>
-              <div className="w-8 h-0.5 rounded-full bg-[hsl(var(--border))]" />
-              <span>Completar →</span>
-            </div>
-          )}
         </div>
-      </motion.div>
 
-      {/* Skip confirmation */}
-      {showSkipInput && (
-        <motion.div
-          initial={{ opacity: 0, y: -10 }}
-          animate={{ opacity: 1, y: 0 }}
-          className="mt-2 p-4 rounded-2xl bg-[hsl(var(--bg-elevated))] card-border"
-        >
-          <p className="text-sm text-[hsl(var(--text-muted))] mb-2">
-            Justificación (sin penalización si es válida):
-          </p>
-          <input
-            autoFocus
-            value={justification}
-            onChange={e => setJustification(e.target.value)}
-            placeholder="Estoy enfermo / emergencia familiar..."
-            className="w-full bg-[hsl(var(--bg-card))] rounded-xl px-3 py-2 text-sm text-[hsl(var(--text))] placeholder-[hsl(var(--text-muted))] outline-none border border-[hsl(var(--border))] focus:border-blue-500/50"
-          />
-          <div className="flex gap-2 mt-3">
-            <button
-              onClick={handleSkipConfirm}
-              className="flex-1 py-2 rounded-xl bg-red-500/20 text-red-400 text-sm font-medium hover:bg-red-500/30 transition-colors"
+        {/* Action buttons */}
+        <div className="px-4 pb-4 flex items-center gap-2">
+          {/* COMPLETE — primary action */}
+          <motion.button
+            onPointerDown={e => e.preventDefault()}
+            onPointerUp={handleComplete}
+            disabled={loading}
+            whileTap={{ scale: 0.96 }}
+            className="flex-1 flex items-center justify-center gap-2 py-3 rounded-xl font-bold text-sm text-white transition-opacity disabled:opacity-60"
+            style={{ background: `linear-gradient(135deg, ${levelColor}, ${levelColor}cc)` }}
+          >
+            <Check className="w-4 h-4" />
+            {loading ? 'Registrando...' : 'Completar'}
+          </motion.button>
+
+          {/* SKIP — secondary action */}
+          <motion.button
+            onPointerDown={e => { e.preventDefault(); setShowSkip(true); }}
+            whileTap={{ scale: 0.96 }}
+            className="px-4 py-3 rounded-xl bg-[hsl(var(--bg-elevated))] border border-[hsl(var(--border))] text-[hsl(var(--text-muted))] text-sm font-medium flex items-center gap-1.5"
+          >
+            <X className="w-4 h-4" />
+            Omitir
+          </motion.button>
+        </div>
+
+        {/* Skip justification */}
+        <AnimatePresence>
+          {showSkip && (
+            <motion.div
+              initial={{ height: 0, opacity: 0 }}
+              animate={{ height: 'auto', opacity: 1 }}
+              exit={{ height: 0, opacity: 0 }}
+              className="overflow-hidden border-t border-[hsl(var(--border))]"
             >
-              Omitir
-            </button>
-            <button
-              onClick={() => setShowSkipInput(false)}
-              className="flex-1 py-2 rounded-xl bg-[hsl(var(--bg-card))] text-[hsl(var(--text-muted))] text-sm font-medium hover:bg-[hsl(var(--bg-elevated))] transition-colors"
-            >
-              Cancelar
-            </button>
-          </div>
-        </motion.div>
-      )}
-    </div>
+              <div className="p-4 space-y-3">
+                <p className="text-xs text-[hsl(var(--text-muted))]">
+                  Justificación (sin penalización si es válida):
+                </p>
+                <input
+                  autoFocus
+                  value={justification}
+                  onChange={e => setJustification(e.target.value)}
+                  placeholder="Estoy enfermo, emergencia familiar..."
+                  className="w-full bg-[hsl(var(--bg-elevated))] rounded-xl px-3 py-2.5 text-sm text-[hsl(var(--text))] placeholder-[hsl(var(--text-muted))] outline-none border border-[hsl(var(--border))] focus:border-red-500/40 transition-colors"
+                />
+                <div className="flex gap-2">
+                  <button
+                    onClick={handleSkipConfirm}
+                    className="flex-1 py-2.5 rounded-xl bg-red-500/15 text-red-400 text-sm font-semibold border border-red-500/25 hover:bg-red-500/25 transition-colors"
+                  >
+                    {justification.trim().length > 8 ? 'Omitir (sin penalización)' : 'Omitir (-' + habit.commitment_contribution + ' pts)'}
+                  </button>
+                  <button
+                    onClick={() => setShowSkip(false)}
+                    className="px-4 py-2.5 rounded-xl bg-[hsl(var(--bg-elevated))] text-[hsl(var(--text-muted))] text-sm border border-[hsl(var(--border))] hover:bg-[hsl(var(--border))] transition-colors"
+                  >
+                    Cancelar
+                  </button>
+                </div>
+              </div>
+            </motion.div>
+          )}
+        </AnimatePresence>
+      </motion.div>
+    </AnimatePresence>
   );
 }
