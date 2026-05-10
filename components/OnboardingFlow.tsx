@@ -76,11 +76,11 @@ export function OnboardingFlow({ onComplete }: OnboardingFlowProps) {
           name, onboarding_completed: true
         }).eq('id', user.id);
 
-        // Create starter habits for selected goals
+        // Create starter habits for selected goals (sequential to avoid race conditions)
         for (const goalId of selectedGoals) {
           const templates = STARTER_HABITS[goalId] ?? [];
           for (const template of templates) {
-            addHabit(template as Parameters<typeof addHabit>[0]);
+            await addHabit(template as Parameters<typeof addHabit>[0]);
           }
         }
       }

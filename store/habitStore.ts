@@ -6,14 +6,26 @@ import { suggestLevel, calculateResiliencePoints } from '@/lib/resilience';
 import { todayKey } from '@/lib/utils';
 import { supabase } from '@/lib/supabase';
 
+// ─── helpers ────────────────────────────────────────────────────────────────
+
+function isRealId(id: string) {
+  return id && !id.startsWith('local_') && !id.startsWith('temp_');
+}
+
+function makeFundGain(level: DifficultyLevel) {
+  return level === 'minimum' ? 5 : level === 'ideal' ? 15 : 30;
+}
+
+// ─── store interface ─────────────────────────────────────────────────────────
+
 interface HabitStore {
   habits: Habit[];
   commitment_fund: CommitmentFund;
   emergency_mode: boolean;
   today_context: TodayContext;
+  // synced is NOT persisted — resets on every load
   synced: boolean;
 
-  // Core actions
   completeHabit: (habitId: string, level: DifficultyLevel, justification?: string) => void;
   skipHabit: (habitId: string, justification: string) => void;
   activateEmergencyMode: () => void;
@@ -23,13 +35,13 @@ interface HabitStore {
   confirmEnvironmentSetup: (habitId: string) => void;
   setHabitLevel: (habitId: string, level: DifficultyLevel) => void;
   getSuggestedLevel: (habitId: string) => DifficultyLevel;
-  addHabit: (data: Omit<Habit, 'id' | 'daily_logs' | 'current_streak' | 'best_streak' | 'streak_resilience_points' | 'current_difficulty_level' | 'environment_setup_status'>) => void;
+  addHabit: (data: Omit<Habit, 'id' | 'daily_logs' | 'current_streak' | 'best_streak' | 'streak_resilience_points' | 'current_difficulty_level'>) => Promise<string>;
   deleteHabit: (habitId: string) => void;
-
-  // Supabase sync
   loadFromSupabase: (userId: string) => Promise<void>;
-  syncHabitToSupabase: (habit: Habit, userId: string) => Promise<void>;
+  markSynced: () => void;
 }
+
+// ─── store ───────────────────────────────────────────────────────────────────
 
 export const useHabitStore = create<HabitStore>()(
   persist(
@@ -40,35 +52,37 @@ export const useHabitStore = create<HabitStore>()(
       today_context: { busy_level: 'normal', energy_level: 70 },
       synced: false,
 
+      // ── complete habit ───────────────────────────────────────────────────
       completeHabit: (habitId, level, justification) => {
-        const { habits, emergency_mode } = get();
         const today = todayKey();
+        const { emergency_mode } = get();
 
+        // Guard: already logged today?
+        const existing = get().habits.find(h => h.id === habitId);
+        if (!existing) return;
+        if (existing.daily_logs.some(l => l.date === today)) return;
+
+        const pts = calculateResiliencePoints(level, existing.current_streak, emergency_mode);
+        const newStreak = existing.current_streak + 1;
+        const fundGain = makeFundGain(level);
+        const newLog = { date: today, completed: true, level_completed: level, emergency_mode, justification, points_earned: pts };
+        const txId = `${Date.now()}`;
+
+        // Update store synchronously for immediate UI feedback
         set(state => {
-          const updatedHabits = state.habits.map(habit => {
-            if (habit.id !== habitId) return habit;
-            if (habit.daily_logs.some(l => l.date === today)) return habit;
-
-            const pts = calculateResiliencePoints(level, habit.current_streak, emergency_mode);
-            const newStreak = habit.current_streak + 1;
-
+          const updatedHabits = state.habits.map(h => {
+            if (h.id !== habitId) return h;
             return {
-              ...habit,
-              daily_logs: [...habit.daily_logs, {
-                date: today, completed: true, level_completed: level,
-                emergency_mode, justification, points_earned: pts,
-              }],
+              ...h,
+              daily_logs: [...h.daily_logs, newLog],
               current_streak: newStreak,
-              best_streak: Math.max(habit.best_streak, newStreak),
-              streak_resilience_points: Math.min(100, habit.streak_resilience_points + Math.round(pts / 5)),
+              best_streak: Math.max(h.best_streak, newStreak),
+              streak_resilience_points: Math.min(100, h.streak_resilience_points + Math.round(pts / 5)),
               current_difficulty_level: level,
             };
           });
 
-          const habit = habits.find(h => h.id === habitId)!;
-          const fundGain = level === 'minimum' ? 5 : level === 'ideal' ? 15 : 30;
-          const tx = { id: `${Date.now()}`, date: today, amount: fundGain,
-            reason: `Completado: ${habit?.name} (${level})`, habit_id: habitId };
+          const tx = { id: txId, date: today, amount: fundGain, reason: `Completado: ${existing.name} (${level})`, habit_id: habitId };
 
           return {
             habits: updatedHabits,
@@ -81,55 +95,78 @@ export const useHabitStore = create<HabitStore>()(
           };
         });
 
-        // Async Supabase sync
-        supabase.auth.getUser().then(({ data: { user } }) => {
-          if (!user) return;
-          const updated = get().habits.find(h => h.id === habitId);
-          if (updated) get().syncHabitToSupabase(updated, user.id);
+        // Background Supabase sync (only if habit has a real UUID)
+        if (!isRealId(habitId)) return;
 
-          const fundGain = level === 'minimum' ? 5 : level === 'ideal' ? 15 : 30;
-          supabase.from('daily_logs').upsert({
-            habit_id: habitId, user_id: user.id, date: today,
-            completed: true, level_completed: level, emergency_mode,
-            justification, points_earned: calculateResiliencePoints(level, 0, emergency_mode),
-          });
-          supabase.from('commitment_fund').upsert({
-            user_id: user.id,
-            balance: get().commitment_fund.balance,
-            total_earned: get().commitment_fund.total_earned,
-            total_lost: get().commitment_fund.total_lost,
-          });
-          supabase.from('commitment_transactions').insert({
-            user_id: user.id, habit_id: habitId, date: today,
-            amount: fundGain, reason: `Completado: ${get().habits.find(h=>h.id===habitId)?.name} (${level})`,
-          });
+        supabase.auth.getUser().then(async ({ data: { user } }) => {
+          if (!user) return;
+
+          const currentFund = get().commitment_fund;
+
+          await Promise.allSettled([
+            supabase.from('daily_logs').upsert({
+              habit_id: habitId,
+              user_id: user.id,
+              date: today,
+              completed: true,
+              level_completed: level,
+              emergency_mode,
+              justification: justification ?? null,
+              points_earned: pts,
+            }),
+            supabase.from('habits').update({
+              current_streak: newStreak,
+              best_streak: Math.max(existing.best_streak, newStreak),
+              streak_resilience_points: Math.min(100, existing.streak_resilience_points + Math.round(pts / 5)),
+              current_difficulty_level: level,
+              updated_at: new Date().toISOString(),
+            }).eq('id', habitId).eq('user_id', user.id),
+            supabase.from('commitment_fund').upsert({
+              user_id: user.id,
+              balance: currentFund.balance,
+              total_earned: currentFund.total_earned,
+              total_lost: currentFund.total_lost,
+              updated_at: new Date().toISOString(),
+            }),
+            supabase.from('commitment_transactions').insert({
+              user_id: user.id,
+              habit_id: habitId,
+              date: today,
+              amount: fundGain,
+              reason: `Completado: ${existing.name} (${level})`,
+            }),
+          ]);
         });
       },
 
+      // ── skip habit ───────────────────────────────────────────────────────
       skipHabit: (habitId, justification) => {
         const today = todayKey();
-        set(state => {
-          const isJustified = justification.trim().length > 8;
-          const habit = state.habits.find(h => h.id === habitId)!;
-          const penalty = isJustified ? 0 : (habit?.commitment_contribution ?? 10);
+        const existing = get().habits.find(h => h.id === habitId);
+        if (!existing) return;
+        if (existing.daily_logs.some(l => l.date === today)) return;
 
+        const isJustified = justification.trim().length > 8;
+        const penalty = isJustified ? 0 : existing.commitment_contribution;
+        const newStreak = isJustified ? existing.current_streak : 0;
+        const newResil = Math.max(0, existing.streak_resilience_points - (isJustified ? 0 : 15));
+
+        set(state => {
           const updatedHabits = state.habits.map(h => {
             if (h.id !== habitId) return h;
-            if (h.daily_logs.some(l => l.date === today)) return h;
             return {
               ...h,
               daily_logs: [...h.daily_logs, {
                 date: today, completed: false,
                 emergency_mode: state.emergency_mode, justification, points_earned: -penalty,
               }],
-              current_streak: isJustified ? h.current_streak : 0,
-              streak_resilience_points: Math.max(0, h.streak_resilience_points - (isJustified ? 0 : 15)),
+              current_streak: newStreak,
+              streak_resilience_points: newResil,
             };
           });
 
           const txList = penalty > 0
-            ? [{ id: `${Date.now()}`, date: today, amount: -penalty,
-                reason: `Omitido: ${habit?.name}`, habit_id: habitId },
+            ? [{ id: `${Date.now()}`, date: today, amount: -penalty, reason: `Omitido: ${existing.name}`, habit_id: habitId },
                ...state.commitment_fund.transactions].slice(0, 50)
             : state.commitment_fund.transactions;
 
@@ -143,8 +180,34 @@ export const useHabitStore = create<HabitStore>()(
             },
           };
         });
+
+        if (!isRealId(habitId)) return;
+        supabase.auth.getUser().then(async ({ data: { user } }) => {
+          if (!user) return;
+          const currentFund = get().commitment_fund;
+          await Promise.allSettled([
+            supabase.from('daily_logs').upsert({
+              habit_id: habitId, user_id: user.id, date: today,
+              completed: false, emergency_mode: get().emergency_mode,
+              justification: justification ?? null, points_earned: -penalty,
+            }),
+            supabase.from('habits').update({
+              current_streak: newStreak, streak_resilience_points: newResil,
+              updated_at: new Date().toISOString(),
+            }).eq('id', habitId).eq('user_id', user.id),
+            penalty > 0 && supabase.from('commitment_fund').upsert({
+              user_id: user.id, balance: currentFund.balance,
+              total_earned: currentFund.total_earned, total_lost: currentFund.total_lost,
+            }),
+            penalty > 0 && supabase.from('commitment_transactions').insert({
+              user_id: user.id, habit_id: habitId, date: today,
+              amount: -penalty, reason: `Omitido: ${existing.name}`,
+            }),
+          ].filter(Boolean));
+        });
       },
 
+      // ── emergency mode ───────────────────────────────────────────────────
       activateEmergencyMode: () =>
         set(state => ({
           emergency_mode: true,
@@ -153,12 +216,14 @@ export const useHabitStore = create<HabitStore>()(
 
       deactivateEmergencyMode: () => set({ emergency_mode: false }),
 
+      // ── context ──────────────────────────────────────────────────────────
       updateBusyLevel: (level) =>
         set(state => ({ today_context: { ...state.today_context, busy_level: level } })),
 
       updateEnergyLevel: (level) =>
         set(state => ({ today_context: { ...state.today_context, energy_level: level } })),
 
+      // ── habit mutations ──────────────────────────────────────────────────
       confirmEnvironmentSetup: (habitId) =>
         set(state => ({
           habits: state.habits.map(h =>
@@ -180,106 +245,147 @@ export const useHabitStore = create<HabitStore>()(
         return suggestLevel(habit, today_context.busy_level, today_context.energy_level);
       },
 
-      addHabit: (data) => {
+      // ── addHabit — creates in Supabase first to get real UUID ────────────
+      addHabit: async (data: Omit<Habit, 'id' | 'daily_logs' | 'current_streak' | 'best_streak' | 'streak_resilience_points' | 'current_difficulty_level'>) => {
+        // 1. Insert into Supabase to get real UUID
+        const { data: { user } } = await supabase.auth.getUser();
+
+        if (user) {
+          const { data: created, error } = await supabase.from('habits').insert({
+            user_id: user.id,
+            name: data.name,
+            icon: data.icon,
+            category: data.category,
+            color: data.color,
+            schedule: data.schedule as object,
+            levels: data.levels as object,
+            current_difficulty_level: 'ideal',
+            environment_setup_status: data.environment_setup_status ?? 'pending',
+            streak_resilience_points: 50,
+            current_streak: 0,
+            best_streak: 0,
+            commitment_contribution: data.commitment_contribution,
+          }).select('id').single();
+
+          if (!error && created) {
+            const newHabit: Habit = {
+              ...data,
+              id: created.id,
+              daily_logs: [],
+              current_streak: 0,
+              best_streak: 0,
+              streak_resilience_points: 50,
+              current_difficulty_level: 'ideal',
+              environment_setup_status: data.environment_setup_status ?? 'pending',
+            };
+            set(state => ({ habits: [...state.habits, newHabit] }));
+            return created.id;
+          }
+        }
+
+        // Fallback: offline mode with local ID
+        const tempId = `local_${Date.now()}`;
         const newHabit: Habit = {
           ...data,
-          id: `local_${Date.now()}`,
+          id: tempId,
           daily_logs: [],
           current_streak: 0,
           best_streak: 0,
           streak_resilience_points: 50,
           current_difficulty_level: 'ideal',
-          environment_setup_status: 'pending',
+          environment_setup_status: data.environment_setup_status ?? 'pending',
         };
         set(state => ({ habits: [...state.habits, newHabit] }));
-
-        // Sync to Supabase
-        supabase.auth.getUser().then(({ data: { user } }) => {
-          if (!user) return;
-          get().syncHabitToSupabase(newHabit, user.id);
-        });
+        return tempId;
       },
 
       deleteHabit: (habitId) => {
         set(state => ({ habits: state.habits.filter(h => h.id !== habitId) }));
-        supabase.from('habits').delete().eq('id', habitId);
+        if (isRealId(habitId)) {
+          supabase.from('habits').delete().eq('id', habitId);
+        }
       },
 
-      // Load all data from Supabase (called on login)
+      markSynced: () => set({ synced: true }),
+
+      // ── load from Supabase ───────────────────────────────────────────────
       loadFromSupabase: async (userId: string) => {
-        const [habitsRes, logsRes, fundRes, txRes] = await Promise.all([
-          supabase.from('habits').select('*').eq('user_id', userId).order('sort_order'),
-          supabase.from('daily_logs').select('*').eq('user_id', userId),
-          supabase.from('commitment_fund').select('*').eq('user_id', userId).single(),
-          supabase.from('commitment_transactions').select('*').eq('user_id', userId)
-            .order('created_at', { ascending: false }).limit(50),
-        ]);
+        try {
+          const [habitsRes, logsRes, fundRes, txRes] = await Promise.all([
+            supabase.from('habits').select('*').eq('user_id', userId).order('created_at'),
+            supabase.from('daily_logs').select('*').eq('user_id', userId).gte('date', getDateNDaysAgo(90)),
+            supabase.from('commitment_fund').select('*').eq('user_id', userId).single(),
+            supabase.from('commitment_transactions').select('*').eq('user_id', userId)
+              .order('created_at', { ascending: false }).limit(50),
+          ]);
 
-        if (!habitsRes.data?.length) { set({ synced: true }); return; }
+          if (!habitsRes.data?.length) {
+            set({ synced: true });
+            return;
+          }
 
-        const habits: Habit[] = habitsRes.data.map(h => ({
-          id: h.id,
-          name: h.name,
-          icon: h.icon,
-          category: h.category as Habit['category'],
-          color: h.color,
-          schedule: h.schedule as Habit['schedule'],
-          levels: h.levels as Habit['levels'],
-          current_difficulty_level: h.current_difficulty_level as DifficultyLevel,
-          environment_setup_status: h.environment_setup_status as Habit['environment_setup_status'],
-          streak_resilience_points: h.streak_resilience_points,
-          current_streak: h.current_streak,
-          best_streak: h.best_streak,
-          commitment_contribution: h.commitment_contribution,
-          daily_logs: (logsRes.data ?? [])
-            .filter(l => l.habit_id === h.id)
-            .map(l => ({
-              date: l.date,
-              completed: l.completed,
-              level_completed: l.level_completed as DifficultyLevel | undefined,
-              emergency_mode: l.emergency_mode,
-              justification: l.justification ?? undefined,
-              points_earned: l.points_earned,
+          const habits: Habit[] = habitsRes.data.map(h => ({
+            id: h.id,
+            name: h.name,
+            icon: h.icon,
+            category: h.category as Habit['category'],
+            color: h.color,
+            schedule: h.schedule as Habit['schedule'],
+            levels: h.levels as Habit['levels'],
+            current_difficulty_level: h.current_difficulty_level as DifficultyLevel,
+            environment_setup_status: h.environment_setup_status as Habit['environment_setup_status'],
+            streak_resilience_points: h.streak_resilience_points,
+            current_streak: h.current_streak,
+            best_streak: h.best_streak,
+            commitment_contribution: h.commitment_contribution,
+            daily_logs: (logsRes.data ?? [])
+              .filter(l => l.habit_id === h.id)
+              .map(l => ({
+                date: l.date,
+                completed: l.completed,
+                level_completed: l.level_completed as DifficultyLevel | undefined,
+                emergency_mode: l.emergency_mode,
+                justification: l.justification ?? undefined,
+                points_earned: l.points_earned,
+              })),
+          }));
+
+          const fundData = fundRes.data;
+          const commitment_fund: CommitmentFund = {
+            balance: fundData?.balance ?? 500,
+            total_earned: fundData?.total_earned ?? 0,
+            total_lost: fundData?.total_lost ?? 0,
+            transactions: (txRes.data ?? []).map(t => ({
+              id: t.id,
+              date: t.date,
+              amount: t.amount,
+              reason: t.reason ?? '',
+              habit_id: t.habit_id ?? undefined,
             })),
-        }));
+          };
 
-        const fund = fundRes.data;
-        const commitment_fund: CommitmentFund = {
-          balance: fund?.balance ?? 500,
-          total_earned: fund?.total_earned ?? 0,
-          total_lost: fund?.total_lost ?? 0,
-          transactions: (txRes.data ?? []).map(t => ({
-            id: t.id,
-            date: t.date,
-            amount: t.amount,
-            reason: t.reason ?? '',
-            habit_id: t.habit_id ?? undefined,
-          })),
-        };
-
-        set({ habits, commitment_fund, synced: true });
-      },
-
-      syncHabitToSupabase: async (habit: Habit, userId: string) => {
-        await supabase.from('habits').upsert({
-          id: habit.id.startsWith('local_') ? undefined : habit.id,
-          user_id: userId,
-          name: habit.name,
-          icon: habit.icon,
-          category: habit.category,
-          color: habit.color,
-          schedule: habit.schedule as object,
-          levels: habit.levels as object,
-          current_difficulty_level: habit.current_difficulty_level,
-          environment_setup_status: habit.environment_setup_status,
-          streak_resilience_points: habit.streak_resilience_points,
-          current_streak: habit.current_streak,
-          best_streak: habit.best_streak,
-          commitment_contribution: habit.commitment_contribution,
-          updated_at: new Date().toISOString(),
-        });
+          set({ habits, commitment_fund, synced: true });
+        } catch (err) {
+          console.error('[loadFromSupabase]', err);
+          set({ synced: true }); // mark synced even on error so UI doesn't block
+        }
       },
     }),
-    { name: 'habitflow-v2' }
+    {
+      name: 'habitflow-v3',
+      // Do NOT persist synced — always reload from Supabase on mount
+      partialize: (state) => ({
+        habits: state.habits,
+        commitment_fund: state.commitment_fund,
+        emergency_mode: state.emergency_mode,
+        today_context: state.today_context,
+      }),
+    }
   )
 );
+
+function getDateNDaysAgo(n: number): string {
+  const d = new Date();
+  d.setDate(d.getDate() - n);
+  return d.toISOString().split('T')[0];
+}
