@@ -7,11 +7,28 @@ export default function AuthCallback() {
   const router = useRouter();
 
   useEffect(() => {
-    // Supabase appends tokens to the URL hash — exchange them for a session
+    // Listen for SIGNED_IN which fires once Supabase processes the hash token
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
+      if (event === 'SIGNED_IN' && session) {
+        // AuthProvider (in layout) handles initUser; we just redirect
+        router.replace('/');
+      }
+    });
+
+    // Also check if a session already exists (user refreshed the callback page)
     supabase.auth.getSession().then(({ data: { session } }) => {
       if (session) router.replace('/');
-      else router.replace('/login');
     });
+
+    // Fallback: if nothing happens in 12 seconds, token is invalid or expired
+    const timeout = setTimeout(() => {
+      router.replace('/login?reason=expired');
+    }, 12_000);
+
+    return () => {
+      subscription.unsubscribe();
+      clearTimeout(timeout);
+    };
   }, [router]);
 
   return (
