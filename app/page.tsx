@@ -18,20 +18,13 @@ import { PushSetup } from '@/components/PushSetup';
 import { Habit } from '@/lib/types';
 
 export default function HomePage() {
-  const { habits, emergency_mode, getSuggestedLevel, addHabit, loadFromSupabase, synced } = useHabitStore();
-  const { user, loading, onboardingCompleted, signOut } = useAuthStore();
+  const { habits, emergency_mode, getSuggestedLevel, addHabit, synced } = useHabitStore();
+  const { user, loading, onboardingCompleted, profileLoaded, signOut } = useAuthStore();
 
   const [showContext, setShowContext] = useState(false);
   const [showCompleted, setShowCompleted] = useState(false);
   const [showOnboarding, setShowOnboarding] = useState(false);
   const [showMenu, setShowMenu] = useState(false);
-
-  // Always load from Supabase on mount / login (synced resets since it's not persisted)
-  useEffect(() => {
-    if (user && !synced) {
-      loadFromSupabase(user.id);
-    }
-  }, [user, synced]);
 
   // Show onboarding for new users after sync
   useEffect(() => {
@@ -65,7 +58,9 @@ export default function HomePage() {
     addHabit(data);
   }
 
-  if (loading || (user && !synced)) {
+  // Wait until both habits (synced) AND profile (profileLoaded) are ready —
+  // prevents onboarding flashing for existing users due to the race condition.
+  if (loading || (user && (!synced || !profileLoaded))) {
     return (
       <div className="min-h-screen flex items-center justify-center">
         <div className="text-center">
