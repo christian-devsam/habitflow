@@ -5,7 +5,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { Mail, Lock, User, ArrowRight, Loader2, Eye, EyeOff, CheckCircle } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 
-type View = 'login' | 'register' | 'reset';
+type View = 'login' | 'register' | 'reset' | 'registered';
 
 export default function LoginPage() {
   return (
@@ -22,6 +22,7 @@ export default function LoginPage() {
 function LoginContent() {
   const searchParams = useSearchParams();
   const sessionExpired = searchParams.get('reason') === 'expired';
+  const passwordRecovery = searchParams.get('reason') === 'recovery';
 
   const [view, setView] = useState<View>('login');
   const [name, setName] = useState('');
@@ -59,10 +60,12 @@ function LoginContent() {
       options: { data: { name } },
     });
     if (error) { setError(error.message); setLoading(false); return; }
-    // If email confirmation is disabled (recommended), session is returned immediately
-    if (!data.session) {
-      setError('Revisa tu email para confirmar la cuenta antes de ingresar.');
+    if (data.session) {
+      // Email confirmation disabled → session ready, AuthProvider handles redirect
+      return;
     }
+    // Email confirmation required → guide the user
+    setView('registered');
     setLoading(false);
   }
 
@@ -74,6 +77,48 @@ function LoginContent() {
     });
     if (error) { setError(error.message); } else { setResetSent(true); }
     setLoading(false);
+  }
+
+  // ── Account registered, waiting for email confirmation ──
+  if (view === 'registered') {
+    return (
+      <div className="min-h-screen flex items-center justify-center px-6 bg-[hsl(var(--bg))]">
+        <motion.div initial={{ scale: 0.95, opacity: 0 }} animate={{ scale: 1, opacity: 1 }}
+          className="max-w-sm w-full text-center space-y-5">
+          <div className="text-6xl">📬</div>
+          <div>
+            <h2 className="text-xl font-bold text-[hsl(var(--text))] mb-2">Confirma tu email</h2>
+            <p className="text-[hsl(var(--text-muted))] text-sm leading-relaxed">
+              Enviamos un link de confirmación a <strong className="text-[hsl(var(--text))]">{email}</strong>.
+            </p>
+          </div>
+          <div className="space-y-2.5 text-left">
+            {[
+              { n: '1', text: 'Abre el email y toca el enlace de confirmación' },
+              { n: '2', text: 'Se abrirá en Safari — eso es normal, solo confirma la cuenta' },
+              { n: '3', text: 'Regresa a la app en tu pantalla de inicio e ingresa con tu contraseña' },
+            ].map(s => (
+              <div key={s.n} className="flex items-start gap-3 p-3 rounded-xl bg-[hsl(var(--bg-elevated))] border border-[hsl(var(--border))]">
+                <span className="w-5 h-5 rounded-full bg-blue-600 text-white text-xs font-bold flex items-center justify-center shrink-0 mt-0.5">
+                  {s.n}
+                </span>
+                <p className="text-sm text-[hsl(var(--text))]">{s.text}</p>
+              </div>
+            ))}
+          </div>
+          <button
+            onClick={() => switchView('login')}
+            className="w-full py-3 rounded-2xl bg-blue-600 text-white font-bold text-sm"
+          >
+            Ya confirmé — Ingresar
+          </button>
+          <button onClick={() => switchView('register')}
+            className="text-xs text-[hsl(var(--text-muted))] hover:text-[hsl(var(--text))] transition-colors">
+            ← Volver
+          </button>
+        </motion.div>
+      </div>
+    );
   }
 
   return (
@@ -90,12 +135,14 @@ function LoginContent() {
         </div>
 
         {/* Session expired banner */}
-        {sessionExpired && (
+        {(sessionExpired || passwordRecovery) && (
           <motion.div
             initial={{ opacity: 0, y: -8 }} animate={{ opacity: 1, y: 0 }}
             className="px-4 py-3 rounded-xl bg-amber-500/10 border border-amber-500/20 mb-5 text-center"
           >
-            <p className="text-amber-400 text-sm font-medium">Tu sesión expiró</p>
+            <p className="text-amber-400 text-sm font-medium">
+              {passwordRecovery ? 'Contraseña actualizada' : 'Tu sesión expiró'}
+            </p>
             <p className="text-amber-400/70 text-xs mt-0.5">Ingresa nuevamente con tu contraseña</p>
           </motion.div>
         )}
