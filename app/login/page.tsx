@@ -1,13 +1,11 @@
 'use client';
-import { useState, useEffect, Suspense } from 'react';
+import { useState, Suspense } from 'react';
 import { useSearchParams } from 'next/navigation';
-import { motion } from 'framer-motion';
-import { Mail, Lock, User, ArrowRight, Loader2, Eye, EyeOff, RefreshCw } from 'lucide-react';
+import { motion, AnimatePresence } from 'framer-motion';
+import { Mail, Lock, User, ArrowRight, Loader2, Eye, EyeOff, CheckCircle } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 
-const APP_URL = process.env.NEXT_PUBLIC_APP_URL ?? 'https://habitflow-eta-five.vercel.app';
-
-type View = 'login' | 'register' | 'magic' | 'sent';
+type View = 'login' | 'register' | 'reset';
 
 export default function LoginPage() {
   return (
@@ -25,23 +23,17 @@ function LoginContent() {
   const searchParams = useSearchParams();
   const sessionExpired = searchParams.get('reason') === 'expired';
 
-  const [view, setView] = useState<View>('magic'); // default to magic link — simplest for mobile
+  const [view, setView] = useState<View>('login');
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [showPw, setShowPw] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
-  const [resendCooldown, setResendCooldown] = useState(0);
-
-  // Countdown for resend button
-  useEffect(() => {
-    if (resendCooldown <= 0) return;
-    const t = setTimeout(() => setResendCooldown(v => v - 1), 1000);
-    return () => clearTimeout(t);
-  }, [resendCooldown]);
+  const [resetSent, setResetSent] = useState(false);
 
   function clearError() { setError(''); }
+  function switchView(v: View) { setView(v); clearError(); setResetSent(false); }
 
   async function handleLogin() {
     if (!email || !password) return;
@@ -54,6 +46,7 @@ function LoginContent() {
           : error.message
       );
     }
+    // On success AuthProvider handles the redirect
     setLoading(false);
   }
 
@@ -63,88 +56,32 @@ function LoginContent() {
     const { data, error } = await supabase.auth.signUp({
       email,
       password,
-      options: {
-        data: { name },
-        emailRedirectTo: `${APP_URL}/`,
-      },
+      options: { data: { name } },
     });
     if (error) { setError(error.message); setLoading(false); return; }
-    if (data.session) return; // AuthProvider handles redirect
-    setView('sent');
+    // If email confirmation is disabled (recommended), session is returned immediately
+    if (!data.session) {
+      setError('Revisa tu email para confirmar la cuenta antes de ingresar.');
+    }
     setLoading(false);
   }
 
-  async function handleMagicLink() {
+  async function handleReset() {
     if (!email) return;
     setLoading(true); clearError();
-    const { error } = await supabase.auth.signInWithOtp({
-      email,
-      options: { emailRedirectTo: `${APP_URL}/auth/callback` },
+    const { error } = await supabase.auth.resetPasswordForEmail(email, {
+      redirectTo: `${process.env.NEXT_PUBLIC_APP_URL ?? 'https://habitflow-eta-five.vercel.app'}/auth/callback`,
     });
-    if (error) { setError(error.message); setLoading(false); return; }
-    setView('sent');
-    setResendCooldown(60);
+    if (error) { setError(error.message); } else { setResetSent(true); }
     setLoading(false);
-  }
-
-  async function handleResend() {
-    if (resendCooldown > 0 || !email) return;
-    setLoading(true); clearError();
-    const { error } = await supabase.auth.signInWithOtp({
-      email,
-      options: { emailRedirectTo: `${APP_URL}/auth/callback` },
-    });
-    if (error) { setError(error.message); } else { setResendCooldown(60); }
-    setLoading(false);
-  }
-
-  if (view === 'sent') {
-    return (
-      <div className="min-h-screen flex items-center justify-center px-6">
-        <motion.div initial={{ scale: 0.9, opacity: 0 }} animate={{ scale: 1, opacity: 1 }}
-          className="text-center max-w-sm w-full">
-          <div className="text-6xl mb-4">📬</div>
-          <h2 className="text-2xl font-bold text-[hsl(var(--text))] mb-3">Revisa tu email</h2>
-          <p className="text-[hsl(var(--text-muted))] text-sm leading-relaxed mb-2">
-            Enviamos un enlace a{' '}
-            <strong className="text-[hsl(var(--text))]">{email}</strong>.
-          </p>
-          <p className="text-[hsl(var(--text-muted))] text-xs mb-8">
-            Ábrelo desde tu celular — te llevará directo a la app. El enlace expira en 1 hora.
-          </p>
-
-          {/* Resend */}
-          <button
-            onClick={handleResend}
-            disabled={resendCooldown > 0 || loading}
-            className="flex items-center gap-2 mx-auto text-sm text-blue-400 hover:text-blue-300 disabled:opacity-40 disabled:cursor-not-allowed transition-colors mb-6"
-          >
-            <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}`} />
-            {resendCooldown > 0 ? `Reenviar en ${resendCooldown}s` : '¿No llegó? Reenviar enlace'}
-          </button>
-
-          {error && (
-            <div className="px-4 py-2.5 rounded-xl bg-red-500/10 border border-red-500/20 mb-4">
-              <p className="text-red-400 text-xs">{error}</p>
-            </div>
-          )}
-
-          <button
-            onClick={() => { setView('magic'); clearError(); setResendCooldown(0); }}
-            className="text-xs text-[hsl(var(--text-muted))] hover:text-[hsl(var(--text))] transition-colors"
-          >
-            ← Cambiar email
-          </button>
-        </motion.div>
-      </div>
-    );
   }
 
   return (
     <div className="min-h-screen flex flex-col justify-center px-6 py-12">
-      <motion.div initial={{ y: 20, opacity: 0 }} animate={{ y: 0, opacity: 1 }}
-        className="max-w-sm mx-auto w-full">
-
+      <motion.div
+        initial={{ y: 20, opacity: 0 }} animate={{ y: 0, opacity: 1 }}
+        className="max-w-sm mx-auto w-full"
+      >
         {/* Logo */}
         <div className="text-center mb-8">
           <div className="text-5xl mb-3">🌊</div>
@@ -159,109 +96,178 @@ function LoginContent() {
             className="px-4 py-3 rounded-xl bg-amber-500/10 border border-amber-500/20 mb-5 text-center"
           >
             <p className="text-amber-400 text-sm font-medium">Tu sesión expiró</p>
-            <p className="text-amber-400/70 text-xs mt-0.5">
-              Ingresa tu email para recibir un nuevo enlace mágico
-            </p>
+            <p className="text-amber-400/70 text-xs mt-0.5">Ingresa nuevamente con tu contraseña</p>
           </motion.div>
         )}
 
-        {/* Tab switcher */}
-        <div className="flex rounded-2xl bg-[hsl(var(--bg-elevated))] p-1 mb-6 gap-1">
-          {[
-            { id: 'magic', label: '✨ Link mágico' },
-            { id: 'login', label: 'Contraseña' },
-            { id: 'register', label: 'Registrarse' },
-          ].map(t => (
-            <button key={t.id} onClick={() => { setView(t.id as View); clearError(); }}
-              className={`flex-1 py-2 rounded-xl text-xs font-semibold transition-colors ${
-                view === t.id
-                  ? 'bg-[hsl(var(--bg-card))] text-[hsl(var(--text))]'
-                  : 'text-[hsl(var(--text-muted))]'
-              }`}>
-              {t.label}
-            </button>
-          ))}
-        </div>
-
-        <div className="space-y-3">
-          {/* Name (register only) */}
-          {view === 'register' && (
-            <div className="relative">
-              <User className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-[hsl(var(--text-muted))]" />
-              <input value={name} onChange={e => setName(e.target.value)}
-                placeholder="Tu nombre"
-                className="w-full bg-[hsl(var(--bg-card))] rounded-xl pl-10 pr-4 py-3.5 text-sm text-[hsl(var(--text))] placeholder-[hsl(var(--text-muted))] outline-none border border-[hsl(var(--border))] focus:border-blue-500/50 transition-colors" />
-            </div>
-          )}
-
-          {/* Email */}
-          <div className="relative">
-            <Mail className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-[hsl(var(--text-muted))]" />
-            <input
-              type="email" value={email} onChange={e => setEmail(e.target.value)}
-              onKeyDown={e => {
-                if (e.key !== 'Enter') return;
-                if (view === 'login') handleLogin();
-                else if (view === 'register') handleRegister();
-                else handleMagicLink();
-              }}
-              placeholder="tu@email.com"
-              autoComplete="email"
-              className="w-full bg-[hsl(var(--bg-card))] rounded-xl pl-10 pr-4 py-3.5 text-sm text-[hsl(var(--text))] placeholder-[hsl(var(--text-muted))] outline-none border border-[hsl(var(--border))] focus:border-blue-500/50 transition-colors"
-            />
-          </div>
-
-          {/* Password (login + register) */}
-          {(view === 'login' || view === 'register') && (
-            <div className="relative">
-              <Lock className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-[hsl(var(--text-muted))]" />
-              <input
-                type={showPw ? 'text' : 'password'} value={password}
-                onChange={e => setPassword(e.target.value)}
-                onKeyDown={e => e.key === 'Enter' && (view === 'login' ? handleLogin() : handleRegister())}
-                placeholder="Contraseña"
-                autoComplete={view === 'login' ? 'current-password' : 'new-password'}
-                className="w-full bg-[hsl(var(--bg-card))] rounded-xl pl-10 pr-10 py-3.5 text-sm text-[hsl(var(--text))] placeholder-[hsl(var(--text-muted))] outline-none border border-[hsl(var(--border))] focus:border-blue-500/50 transition-colors"
-              />
-              <button onClick={() => setShowPw(v => !v)}
-                className="absolute right-3.5 top-1/2 -translate-y-1/2 text-[hsl(var(--text-muted))] hover:text-[hsl(var(--text))] transition-colors">
-                {showPw ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+        {/* Tabs: Ingresar / Registrarse */}
+        {view !== 'reset' && (
+          <div className="flex rounded-2xl bg-[hsl(var(--bg-elevated))] p-1 mb-6 gap-1">
+            {[
+              { id: 'login' as View, label: 'Ingresar' },
+              { id: 'register' as View, label: 'Crear cuenta' },
+            ].map(t => (
+              <button
+                key={t.id}
+                onClick={() => switchView(t.id)}
+                className={`flex-1 py-2.5 rounded-xl text-sm font-semibold transition-colors ${
+                  view === t.id
+                    ? 'bg-[hsl(var(--bg-card))] text-[hsl(var(--text))] shadow-sm'
+                    : 'text-[hsl(var(--text-muted))]'
+                }`}
+              >
+                {t.label}
               </button>
-            </div>
-          )}
+            ))}
+          </div>
+        )}
 
-          {/* Magic link hint */}
-          {view === 'magic' && (
-            <p className="text-xs text-[hsl(var(--text-muted))] px-1 pb-1">
-              Te enviamos un enlace a tu email. Ábrelo desde tu iPhone y entras directo, sin contraseña.
-              El enlace dura 1 hora — si expira, pide uno nuevo aquí.
-            </p>
-          )}
+        <AnimatePresence mode="wait">
+          {/* ── Reset password ── */}
+          {view === 'reset' && (
+            <motion.div
+              key="reset"
+              initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -20 }}
+              className="space-y-4"
+            >
+              <div>
+                <h2 className="text-lg font-bold text-[hsl(var(--text))] mb-1">Recuperar contraseña</h2>
+                <p className="text-[hsl(var(--text-muted))] text-sm">
+                  Te enviaremos un enlace para crear una nueva contraseña.
+                </p>
+              </div>
 
-          {/* Error */}
-          {error && (
-            <div className="px-4 py-2.5 rounded-xl bg-red-500/10 border border-red-500/20">
-              <p className="text-red-400 text-xs">{error}</p>
-            </div>
-          )}
+              {resetSent ? (
+                <div className="py-6 text-center space-y-3">
+                  <CheckCircle className="w-12 h-12 text-green-400 mx-auto" />
+                  <p className="text-sm text-[hsl(var(--text))] font-medium">¡Enlace enviado!</p>
+                  <p className="text-xs text-[hsl(var(--text-muted))]">
+                    Revisa tu email y sigue el enlace para crear una nueva contraseña.
+                  </p>
+                </div>
+              ) : (
+                <>
+                  <div className="relative">
+                    <Mail className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-[hsl(var(--text-muted))]" />
+                    <input
+                      type="email" value={email} onChange={e => setEmail(e.target.value)}
+                      onKeyDown={e => e.key === 'Enter' && handleReset()}
+                      placeholder="tu@email.com"
+                      autoComplete="email"
+                      className="w-full bg-[hsl(var(--bg-card))] rounded-xl pl-10 pr-4 py-3.5 text-sm text-[hsl(var(--text))] placeholder-[hsl(var(--text-muted))] outline-none border border-[hsl(var(--border))] focus:border-blue-500/50 transition-colors"
+                    />
+                  </div>
 
-          {/* CTA */}
-          <button
-            onClick={view === 'login' ? handleLogin : view === 'register' ? handleRegister : handleMagicLink}
-            disabled={loading || !email || ((view === 'login' || view === 'register') && !password) || (view === 'register' && !name)}
-            className="w-full flex items-center justify-center gap-2 py-3.5 rounded-2xl bg-blue-600 hover:bg-blue-500 active:scale-[0.98] disabled:opacity-40 disabled:cursor-not-allowed text-white font-bold text-sm transition-all"
-          >
-            {loading
-              ? <Loader2 className="w-4 h-4 animate-spin" />
-              : <>
-                  {view === 'login' ? 'Ingresar' : view === 'register' ? 'Crear cuenta' : 'Enviar link mágico'}
-                  <ArrowRight className="w-4 h-4" />
+                  {error && (
+                    <div className="px-4 py-2.5 rounded-xl bg-red-500/10 border border-red-500/20">
+                      <p className="text-red-400 text-xs">{error}</p>
+                    </div>
+                  )}
+
+                  <button
+                    onClick={handleReset}
+                    disabled={loading || !email}
+                    className="w-full flex items-center justify-center gap-2 py-3.5 rounded-2xl bg-blue-600 hover:bg-blue-500 active:scale-[0.98] disabled:opacity-40 text-white font-bold text-sm transition-all"
+                  >
+                    {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <>Enviar enlace <ArrowRight className="w-4 h-4" /></>}
+                  </button>
                 </>
-            }
-          </button>
-        </div>
+              )}
 
-        <p className="text-center text-xs text-[hsl(var(--text-muted))] mt-8 opacity-60">
+              <button
+                onClick={() => switchView('login')}
+                className="w-full text-center text-xs text-[hsl(var(--text-muted))] hover:text-[hsl(var(--text))] transition-colors pt-1"
+              >
+                ← Volver al inicio
+              </button>
+            </motion.div>
+          )}
+
+          {/* ── Login / Register ── */}
+          {view !== 'reset' && (
+            <motion.div
+              key={view}
+              initial={{ opacity: 0, x: 10 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -10 }}
+              className="space-y-3"
+            >
+              {/* Name (register only) */}
+              {view === 'register' && (
+                <div className="relative">
+                  <User className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-[hsl(var(--text-muted))]" />
+                  <input
+                    value={name} onChange={e => setName(e.target.value)}
+                    placeholder="Tu nombre"
+                    autoComplete="name"
+                    className="w-full bg-[hsl(var(--bg-card))] rounded-xl pl-10 pr-4 py-3.5 text-sm text-[hsl(var(--text))] placeholder-[hsl(var(--text-muted))] outline-none border border-[hsl(var(--border))] focus:border-blue-500/50 transition-colors"
+                  />
+                </div>
+              )}
+
+              {/* Email */}
+              <div className="relative">
+                <Mail className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-[hsl(var(--text-muted))]" />
+                <input
+                  type="email" value={email} onChange={e => setEmail(e.target.value)}
+                  onKeyDown={e => e.key === 'Enter' && (view === 'login' ? handleLogin() : handleRegister())}
+                  placeholder="tu@email.com"
+                  autoComplete="email"
+                  className="w-full bg-[hsl(var(--bg-card))] rounded-xl pl-10 pr-4 py-3.5 text-sm text-[hsl(var(--text))] placeholder-[hsl(var(--text-muted))] outline-none border border-[hsl(var(--border))] focus:border-blue-500/50 transition-colors"
+                />
+              </div>
+
+              {/* Password */}
+              <div className="relative">
+                <Lock className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-[hsl(var(--text-muted))]" />
+                <input
+                  type={showPw ? 'text' : 'password'} value={password}
+                  onChange={e => setPassword(e.target.value)}
+                  onKeyDown={e => e.key === 'Enter' && (view === 'login' ? handleLogin() : handleRegister())}
+                  placeholder="Contraseña"
+                  autoComplete={view === 'login' ? 'current-password' : 'new-password'}
+                  className="w-full bg-[hsl(var(--bg-card))] rounded-xl pl-10 pr-10 py-3.5 text-sm text-[hsl(var(--text))] placeholder-[hsl(var(--text-muted))] outline-none border border-[hsl(var(--border))] focus:border-blue-500/50 transition-colors"
+                />
+                <button
+                  onPointerDown={e => { e.preventDefault(); setShowPw(v => !v); }}
+                  className="absolute right-3.5 top-1/2 -translate-y-1/2 text-[hsl(var(--text-muted))] hover:text-[hsl(var(--text))] transition-colors"
+                >
+                  {showPw ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                </button>
+              </div>
+
+              {/* Error */}
+              {error && (
+                <div className="px-4 py-2.5 rounded-xl bg-red-500/10 border border-red-500/20">
+                  <p className="text-red-400 text-xs">{error}</p>
+                </div>
+              )}
+
+              {/* CTA */}
+              <button
+                onPointerDown={e => e.preventDefault()}
+                onPointerUp={view === 'login' ? handleLogin : handleRegister}
+                disabled={loading || !email || !password || (view === 'register' && !name)}
+                className="w-full flex items-center justify-center gap-2 py-3.5 rounded-2xl bg-blue-600 hover:bg-blue-500 active:scale-[0.98] disabled:opacity-40 disabled:cursor-not-allowed text-white font-bold text-sm transition-all"
+              >
+                {loading
+                  ? <Loader2 className="w-4 h-4 animate-spin" />
+                  : <>{view === 'login' ? 'Ingresar' : 'Crear cuenta'} <ArrowRight className="w-4 h-4" /></>
+                }
+              </button>
+
+              {/* Forgot password — only on login */}
+              {view === 'login' && (
+                <button
+                  onClick={() => switchView('reset')}
+                  className="w-full text-center text-xs text-[hsl(var(--text-muted))] hover:text-blue-400 transition-colors pt-1"
+                >
+                  ¿Olvidaste tu contraseña?
+                </button>
+              )}
+            </motion.div>
+          )}
+        </AnimatePresence>
+
+        <p className="text-center text-xs text-[hsl(var(--text-muted))] mt-10 opacity-60">
           HabitFlow · Construye hábitos que duran 🌱
         </p>
       </motion.div>

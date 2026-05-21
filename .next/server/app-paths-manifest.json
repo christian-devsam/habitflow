@@ -1,15 +1,15 @@
 {
   "/_not-found/page": "app/_not-found/page.js",
-  "/api/ai/coach/route": "app/api/ai/coach/route.js",
-  "/api/calendar/events/route": "app/api/calendar/events/route.js",
-  "/api/ai/chat/route": "app/api/ai/chat/route.js",
-  "/api/calendar/callback/route": "app/api/calendar/callback/route.js",
-  "/login/page": "app/login/page.js",
-  "/auth/callback/page": "app/auth/callback/page.js",
-  "/page": "app/page.js",
-  "/api/push/vapid-key/route": "app/api/push/vapid-key/route.js",
   "/api/ai/create-habit/route": "app/api/ai/create-habit/route.js",
   "/api/calendar/connect/route": "app/api/calendar/connect/route.js",
+  "/login/page": "app/login/page.js",
   "/api/push/subscribe/route": "app/api/push/subscribe/route.js",
-  "/api/push/send/route": "app/api/push/send/route.js"
+  "/api/ai/coach/route": "app/api/ai/coach/route.js",
+  "/page": "app/page.js",
+  "/api/calendar/events/route": "app/api/calendar/events/route.js",
+  "/api/push/send/route": "app/api/push/send/route.js",
+  "/api/push/vapid-key/route": "app/api/push/vapid-key/route.js",
+  "/auth/callback/page": "app/auth/callback/page.js",
+  "/api/calendar/callback/route": "app/api/calendar/callback/route.js",
+  "/api/ai/chat/route": "app/api/ai/chat/route.js"
 }
