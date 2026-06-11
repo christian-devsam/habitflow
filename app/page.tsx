@@ -58,14 +58,19 @@ export default function HomePage() {
     addHabit(data);
   }
 
-  // Wait until both habits (synced) AND profile (profileLoaded) are ready —
-  // prevents onboarding flashing for existing users due to the race condition.
-  if (loading || (user && (!synced || !profileLoaded))) {
+  // Show the loader while:
+  //  • auth is still resolving (loading)
+  //  • there is no user yet — a redirect to /login is imminent, so never flash
+  //    the home content (this is what caused the brief home → login jump)
+  //  • the user's profile + habits haven't finished syncing
+  if (loading || !user || !synced || !profileLoaded) {
     return (
       <div className="min-h-screen flex items-center justify-center">
         <div className="text-center">
           <div className="text-4xl mb-3 animate-pulse">🌊</div>
-          <p className="text-[hsl(var(--text-muted))] text-sm">Sincronizando hábitos...</p>
+          <p className="text-[hsl(var(--text-muted))] text-sm">
+            {user ? 'Sincronizando hábitos...' : 'Cargando...'}
+          </p>
         </div>
       </div>
     );

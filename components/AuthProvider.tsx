@@ -51,7 +51,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         await initUser(session.user.id);
       } else {
         if (pathname !== '/login' && pathname !== '/auth/callback') {
-          router.push('/login?reason=expired');
+          // Only flag "expired" if the user actually had a session before;
+          // a brand-new visitor just lands on a clean /login.
+          const expired = useAuthStore.getState().wasAuthenticated;
+          useAuthStore.setState({ wasAuthenticated: false });
+          router.replace(expired ? '/login?reason=expired' : '/login');
         }
       }
     });
@@ -68,13 +72,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         });
         setProfileLoaded(false);
         setOnboardingCompleted(false);
-        router.push('/login');
+        useAuthStore.setState({ wasAuthenticated: false });
+        router.replace('/login');
 
       } else if (event === 'SIGNED_IN' && session) {
-        // Fresh login (magic link, password, OAuth)
+        // Fresh login (password, OAuth)
         await initUser(session.user.id);
         if (pathname === '/login' || pathname === '/auth/callback') {
-          router.push('/');
+          router.replace('/');
         }
 
       } else if (event === 'TOKEN_REFRESHED' && session) {
